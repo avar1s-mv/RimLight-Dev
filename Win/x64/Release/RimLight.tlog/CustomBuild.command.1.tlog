@@ -1,0 +1,4 @@
+^D:\COMMISSIONS STUFF\PERSONAL PROJECT\EXPERIEMNT\PLUGINTES-RIMLIGHT\EXAMPLES\TEMPLATE\SKELETON\RIMLIGHTPIPL.R
+cl /I "D:\Commissions Stuff\Personal Project\experiemnt\pluginTes-RImlight\Examples\Template\Skeleton\Win\..\..\..\Headers" /EP ".."\\"RimLightPiPL.r" > "x64\Release\"\\"RimLightPiPL.rr"
+"D:\Commissions Stuff\Personal Project\experiemnt\pluginTes-RImlight\Examples\Template\Skeleton\Win\..\..\..\Resources\PiPLTool" "x64\Release\RimLightPiPL.rr" "x64\Release\RimLightPiPL.rrc"
+cl /D "MSWindows" /EP x64\Release\RimLightPiPL.rrc >               "D:\Commissions Stuff\Personal Project\experiemnt\pluginTes-RImlight\Examples\Template\Skeleton\Win\"\\"RimLightPiPL".rc

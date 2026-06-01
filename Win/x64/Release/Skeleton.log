@@ -1,0 +1,16 @@
+﻿  Compiling the PiPL
+  Microsoft (R) C/C++ Optimizing Compiler Version 19.51.36246 for x64
+  Copyright (C) Microsoft Corporation.  All rights reserved.
+  
+  RimLightPiPL.r
+  Microsoft (R) C/C++ Optimizing Compiler Version 19.51.36246 for x64
+  Copyright (C) Microsoft Corporation.  All rights reserved.
+  
+  RimLightPiPL.rrc
+  AEGP_SuiteHandler.cpp
+  MissingSuiteError.cpp
+  RimLight.cpp
+  RimLight_Strings.cpp
+  Generating Code...
+     Creating library x64\Release\/RimLight.lib and object x64\Release\/RimLight.exp
+  Skeleton.vcxproj -> D:\RimLight.aex
