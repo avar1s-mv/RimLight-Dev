@@ -13,6 +13,7 @@ TableString g_strs[StrID_NUMTYPES] = {
     { StrID_RimColor_Param_Name,            "Color" },
     { StrID_RimSize_Param_Name,             "Size" },
     { StrID_RimOpacity_Param_Name,          "Opacity" },
+    { StrID_RimIntensity_Param_Name,        "Intensity" },
     { StrID_RimAngle_Param_Name,            "Angle" },
     { StrID_RimSoftness_Param_Name,         "Softness" },
     { StrID_RimBlendMode_Param_Name,        "Blend Mode" },

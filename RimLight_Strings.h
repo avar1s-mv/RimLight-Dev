@@ -11,6 +11,7 @@ typedef enum {
     StrID_RimColor_Param_Name,
     StrID_RimSize_Param_Name,
     StrID_RimOpacity_Param_Name,
+    StrID_RimIntensity_Param_Name,
     StrID_RimAngle_Param_Name,
     StrID_RimSoftness_Param_Name,
     StrID_RimBlendMode_Param_Name,

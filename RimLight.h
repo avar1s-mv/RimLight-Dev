@@ -33,6 +33,7 @@ enum {
     RIM_COLOR,
     RIM_SIZE,
     RIM_OPACITY,
+    RIM_INTENSITY,
     RIM_ANGLE,
     RIM_SOFTNESS,
     RIM_BLEND_MODE,
@@ -62,6 +63,7 @@ enum {
     RIM_COLOR_DISK_ID = 1,
     RIM_SIZE_DISK_ID,
     RIM_OPACITY_DISK_ID,
+    RIM_INTENSITY_DISK_ID,
     RIM_ANGLE_DISK_ID,
     RIM_SOFTNESS_DISK_ID,
     RIM_BLEND_MODE_DISK_ID,
@@ -96,6 +98,11 @@ enum {
 #define RIM_OPACITY_MAX  100.0
 #define RIM_OPACITY_DFLT 100.0
 
+// Intensity (0–100 %) — controls rim light brightness independent of opacity
+#define RIM_INTENSITY_MIN   0.0
+#define RIM_INTENSITY_MAX   100.0
+#define RIM_INTENSITY_DFLT  35.0
+
 // Angle default: 180 degrees → cahaya dari atas → rim di atas layer
 #define RIM_ANGLE_DFLT   180
 
@@ -127,21 +134,22 @@ enum {
 // Radius: stage-1 (tight) blur radius. Stage-2 = Radius * GLOW_STAGE2_MULT.
 #define GLOW_INDIVIDUAL_RADIUS_DFLT  1   // default: individual X/Y mode
 #define GLOW_RADIUS_MIN   0.0
-#define GLOW_RADIUS_MAX   200.0
+#define GLOW_RADIUS_MAX   2000.0
 #define GLOW_RADIUS_DFLT  5.25
 #define GLOW_RADIUS_X_MIN   0.0
-#define GLOW_RADIUS_X_MAX   200.0
+#define GLOW_RADIUS_X_MAX   2000.0
 #define GLOW_RADIUS_X_DFLT  5.0
 #define GLOW_RADIUS_Y_MIN   0.0
-#define GLOW_RADIUS_Y_MAX   200.0
+#define GLOW_RADIUS_Y_MAX   2000.0
 #define GLOW_RADIUS_Y_DFLT  20.0
-#define GLOW_STAGE2_MULT  6.0   // stage-2 radius = radius * 6
+#define GLOW_STAGE2_MULT  8.0   // max pyramid blur multiplier (8× base radius)
 #define GLOW_INSIDE_ATTEN  0.35 // inside glow multiplier (outside = 1.0, inside = this)
+#define GLOW_TIGHT_RADIUS_MULT  0.25 // tight glow radius = main radius * this multiplier
 
 // Intensity: brightness multiplier on glow map before composite
 #define GLOW_INTENSITY_MIN   0.0
-#define GLOW_INTENSITY_MAX   500.0
-#define GLOW_INTENSITY_DFLT  0.0
+#define GLOW_INTENSITY_MAX   20.0
+#define GLOW_INTENSITY_DFLT  1.0
 
 // Saturation: 0 = fully desaturated to glow color, 1 = preserve source hue
 #define GLOW_SATURATION_MIN   0.0
@@ -154,10 +162,11 @@ enum {
 #define GLOW_OPACITY_DFLT  1.0
 
 // Glow Type popup choices (1-based in AE)
-#define GLOW_TYPE_NORMAL   0
-#define GLOW_TYPE_ADD      1
-#define GLOW_TYPE_SCREEN   2   // default
-#define GLOW_TYPE_DFLT     GLOW_TYPE_SCREEN
+#define GLOW_TYPE_NORMAL      0
+#define GLOW_TYPE_ADD         1
+#define GLOW_TYPE_SCREEN      2
+#define GLOW_TYPE_SOFT_LIGHT  3
+#define GLOW_TYPE_DFLT        GLOW_TYPE_SCREEN   // backward compatible
 
 // ─────────────────────────────────────────────────────────────────────────────
 // String IDs (must match RimLight_Strings.h / .cpp)
@@ -169,6 +178,7 @@ enum {
     StrID_RimColor_Param_Name,
     StrID_RimSize_Param_Name,
     StrID_RimOpacity_Param_Name,
+    StrID_RimIntensity_Param_Name,
     StrID_RimAngle_Param_Name,
     StrID_RimSoftness_Param_Name,
     StrID_RimBlendMode_Param_Name,
@@ -196,6 +206,7 @@ typedef struct {
     PF_Pixel    rim_color;          // RGBA warna rim (red/green/blue 0–255)
     double      rim_size;           // offset distance dalam pixel
     double      rim_opacity;        // 0–100
+    double      rim_intensity;      // 0–100 — brightness multiplier
     double      rim_angle;          // derajat (sudah dikonversi dari AE fixed-point)
     double      rim_softness;       // Gaussian blur radius pada rim mask (pixel)
     A_long      rim_blend_mode;     // 0=Normal, 1=Add, 2=Screen

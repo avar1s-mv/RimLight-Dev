@@ -1,2 +1,7 @@
 ﻿C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Microsoft\VC\v180\Microsoft.CppBuild.targets(537,5): warning MSB8004: Output Directory does not end with a trailing slash.  This build instance will add the slash as it is required to allow proper evaluation of the Output Directory.
+  RimLight.cpp
+  RimLight_Strings.cpp
+  Generating Code...
+  LINK : ..\..\..\..\Build\RimLight.aex not found or not built by the last incremental link; performing full link
+     Creating library x64\Debug\/RimLight.lib and object x64\Debug\/RimLight.exp
   Skeleton.vcxproj -> D:\Commissions Stuff\Personal Project\experiemnt\pluginTes-RImlight\Build\RimLight.aex

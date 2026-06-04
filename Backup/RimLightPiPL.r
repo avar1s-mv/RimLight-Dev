@@ -43,7 +43,8 @@ resource 'PiPL' (16000) {
             0x06000000
         },
         AE_Effect_Global_OutFlags_2 {
-            0x00000000
+            PF_OutFlag2_FLOAT_COLOR_AWARE |
+            PF_OutFlag2_SUPPORTS_SMART_RENDER
         },
         AE_Effect_Match_Name {
             "Avaris RimLight"
