@@ -247,22 +247,43 @@ static float* BuildGlowBuffer(
             ApplySoftness(result, scratch, w, h, baseBlurR, baseBlurR);
     }
 
-    // Step 3: ADD 6 blurred pyramid levels (additive, not normalized).
-    static const float kRadMult[6]   = { 0.5f,  1.0f,  2.0f,  4.0f,  8.0f, 16.0f };
-    static const float kAddWeight[6] = { 0.50f, 0.35f, 0.22f, 0.12f, 0.06f, 0.03f };
+    // Step 3: Additive chained pyramid — each level blurs from the PREVIOUS
+    // level's output (cascade/chain), not from the original sharp src.
+    // This creates a true additive layered bloom: every level inherits and
+    // accumulates the spread of the level before it, producing richer, deeper
+    // glow falloff compared to blurring independently from src each time.
+    static const float kRadMult[6]   = { 0.35f, 0.7f,  1.4f,  2.8f,  5.6f, 11.2f };
+    static const float kAddWeight[6] = { 0.65f, 0.45f, 0.28f, 0.15f, 0.07f, 0.03f };
 
+    // 'level' starts as a copy of src; each iteration blurs it further in-place.
     float* level = new (std::nothrow) float[nPix];
     if (!level) { delete[] src; delete[] result; return nullptr; }
 
+    // Seed the chain from the sharp threshold source.
+    memcpy(level, src, nPix * sizeof(float));
+
+    // Track the radius already applied so each pass only adds the *incremental*
+    // blur needed to reach the next kRadMult step (avoids redundant re-blur from 0).
+    double prevRX = (radiusX + radiusY) * 0.5 * 0.25;  // matches base blur in Step 2
+    double prevRY = prevRX;
+
     for (int lv = 0; lv < 6; ++lv) {
-        const double rx = radiusX * (double)kRadMult[lv];
-        const double ry = radiusY * (double)kRadMult[lv];
+        const double targetRX = radiusX * (double)kRadMult[lv];
+        const double targetRY = radiusY * (double)kRadMult[lv];
 
-        memcpy(level, src, nPix * sizeof(float));
+        // Incremental blur: only apply the delta on top of the previous pass.
+        const double deltaRX = targetRX - prevRX;
+        const double deltaRY = targetRY - prevRY;
 
-        if (rx >= 0.5 || ry >= 0.5)
-            ApplySoftness(level, scratch, w, h, rx, ry);
+        if (deltaRX >= 0.5 || deltaRY >= 0.5)
+            ApplySoftness(level, scratch, w, h,
+                          deltaRX > 0.0 ? deltaRX : 0.0,
+                          deltaRY > 0.0 ? deltaRY : 0.0);
 
+        prevRX = targetRX;
+        prevRY = targetRY;
+
+        // Additive composite: each level's blurred output adds onto result.
         const float aw = kAddWeight[lv];
         for (size_t i = 0; i < nPix; ++i)
             result[i] += level[i] * aw;
@@ -944,6 +965,55 @@ static PF_Err RimRender8(
 
 
 
+    // ── Pass 3.5: rim→glow transition — tight additive fringe ───────────────
+    // Satu level blur sangat kecil di atas rimMask yang sudah di-soften.
+    // Radius dikunci kecil (≤ 2 px, 12% dari glow radius) agar tidak bias —
+    // hanya mengisi gap 1-2 px antara tepi rim dan awal glow pyramid.
+    // Weight tinggi (0.85) sehingga mayoritas intensitas terkonsentrasi di sini,
+    // bukan menyebar ke level-level glow yang lebih luar.
+    if (glowActive && info.glow_intensity > 0.0) {
+        const double transRaw = (glowRX_8 + glowRY_8) * 0.5 * 0.12;
+        const double transR   = transRaw < 0.5 ? 0.5 : (transRaw > 2.0 ? 2.0 : transRaw);
+        float* transBuf = new (std::nothrow) float[nPix];
+        if (transBuf) {
+            memcpy(transBuf, mask, nPix * sizeof(float));
+            ApplySoftness(transBuf, scratch, width, height, transR, transR);
+
+            static const double kTransWeight = 0.85;
+            const double tIntensity = info.glow_intensity * info.glow_opacity * kTransWeight;
+
+            for (A_long y = 0; y < height; ++y) {
+                for (A_long x = 0; x < width; ++x) {
+                    PF_Pixel8& dp = dst_base[y * dst_stride + x];
+                    const PF_Pixel8& sp = src_base[y * src_stride + x];
+
+                    const double tv = transBuf[y * width + x] * tIntensity;
+                    if (tv <= 0.0) continue;
+
+                    const double t_alpha = tv > 1.0 ? 1.0 : tv;
+                    const A_u_char tAlpha8 = clamp255((int)(t_alpha * 255.0));
+                    if (tAlpha8 == 0) continue;
+
+                    if (sp.alpha == 0) {
+                        dp.red   = clamp255((int)(glowR_n * 255.0));
+                        dp.green = clamp255((int)(glowG_n * 255.0));
+                        dp.blue  = clamp255((int)(glowB_n * 255.0));
+                        dp.alpha = tAlpha8;
+                    } else {
+                        const double dR = dp.red   / 255.0;
+                        const double dG = dp.green / 255.0;
+                        const double dB = dp.blue  / 255.0;
+                        dp.red   = clamp255((int)(GlowBlendChannel(dR, glowR_n * tv, GLOW_TYPE_ADD) * 255.0));
+                        dp.green = clamp255((int)(GlowBlendChannel(dG, glowG_n * tv, GLOW_TYPE_ADD) * 255.0));
+                        dp.blue  = clamp255((int)(GlowBlendChannel(dB, glowB_n * tv, GLOW_TYPE_ADD) * 255.0));
+                        if (tAlpha8 > dp.alpha) dp.alpha = tAlpha8;
+                    }
+                }
+            }
+            delete[] transBuf;
+        }
+    }
+
     // ── Pass 4: glow (uses un-matted glowMask, not clamped by source alpha) ──
 
     if (glowActive) {
@@ -1325,6 +1395,50 @@ static PF_Err RimRender16(
     }
 
 
+
+    // ── Pass 3.5: rim→glow transition — tight additive fringe (16-bit) ─────
+    if (glowActive && info.glow_intensity > 0.0) {
+        const double transRaw16 = (glowRX_16 + glowRY_16) * 0.5 * 0.12;
+        const double transR16   = transRaw16 < 0.5 ? 0.5 : (transRaw16 > 2.0 ? 2.0 : transRaw16);
+        float* transBuf16 = new (std::nothrow) float[nPix];
+        if (transBuf16) {
+            memcpy(transBuf16, mask, nPix * sizeof(float));
+            ApplySoftness(transBuf16, scratch, width, height, transR16, transR16);
+
+            static const double kTransWeight = 0.85;
+            const double tIntensity16 = info.glow_intensity * info.glow_opacity * kTransWeight;
+
+            for (A_long y = 0; y < height; ++y) {
+                for (A_long x = 0; x < width; ++x) {
+                    PF_Pixel16& dp = dst_base[y * dst_stride + x];
+                    const PF_Pixel16& sp = src_base[y * src_stride + x];
+
+                    const double tv = transBuf16[y * width + x] * tIntensity16;
+                    if (tv <= 0.0) continue;
+
+                    const double t_alpha = tv > 1.0 ? 1.0 : tv;
+                    const A_u_short tAlpha16 = clamp32768((int)(t_alpha * 32768.0));
+                    if (tAlpha16 == 0) continue;
+
+                    if (sp.alpha == 0) {
+                        dp.red   = clamp32768((int)(glowR_n * 32768.0));
+                        dp.green = clamp32768((int)(glowG_n * 32768.0));
+                        dp.blue  = clamp32768((int)(glowB_n * 32768.0));
+                        dp.alpha = tAlpha16;
+                    } else {
+                        const double dR = dp.red   / 32768.0;
+                        const double dG = dp.green / 32768.0;
+                        const double dB = dp.blue  / 32768.0;
+                        dp.red   = clamp32768((int)(GlowBlendChannel(dR, glowR_n * tv, GLOW_TYPE_ADD) * 32768.0));
+                        dp.green = clamp32768((int)(GlowBlendChannel(dG, glowG_n * tv, GLOW_TYPE_ADD) * 32768.0));
+                        dp.blue  = clamp32768((int)(GlowBlendChannel(dB, glowB_n * tv, GLOW_TYPE_ADD) * 32768.0));
+                        if (tAlpha16 > dp.alpha) dp.alpha = tAlpha16;
+                    }
+                }
+            }
+            delete[] transBuf16;
+        }
+    }
 
     // ── Pass 4: glow (uses un-matted glowMask) ────────────────────────────────
 
@@ -1726,25 +1840,23 @@ static PF_Err PreRender(
 
     const double rimSizeVal = rimSizeParam.u.fs_d.value;
 
-    const double softRadius = err ? 0.0 : rimSoftnessParam.u.fs_d.value * 0.85 * 3.0;
+    // softRadius: ApplySoftness spreads ~r pixels, not r*0.85*3.
+    const double softRadius = err ? 0.0 : rimSoftnessParam.u.fs_d.value;
 
     // Compute effective glow radius for padding (use max of X/Y)
-
     const A_long individual = err ? 0 : glowIndividualParam.u.bd.value;
 
     const double glowR = err ? 0.0 :
-
         (individual ? fmax(glowRadiusXParam.u.fs_d.value, glowRadiusYParam.u.fs_d.value) :
-
             glowRadiusParam.u.fs_d.value);
 
-    // Stage-2 glow = radius * GLOW_STAGE2_MULT, 3 box-blur passes each side
-
-    const double glowRadius = glowR * GLOW_STAGE2_MULT * 0.85 * 3.0;
-
+    // Glow spread: outermost pyramid level kRadMult[5]=11.2 is the max pixel
+    // distance glow can land from source mask. +8 px margin for ExpandMaskSmooth.
+    // Hard-cap at 512 px so large radius values never blow up the AE buffer.
+    const double glowSpread = glowR * 11.2 + 8.0;
+    const double rawPad = rimSizeVal + softRadius + glowSpread + 4.0;
     const A_long pad = err ? 64 :
-
-        static_cast<A_long>(ceil(rimSizeVal + softRadius + glowRadius)) + 4;
+        static_cast<A_long>(ceil(rawPad < 512.0 ? rawPad : 512.0));
 
     const A_long rimSizePx = err ? 0 : static_cast<A_long>(ceil(rimSizeVal));
 
@@ -2292,6 +2404,53 @@ static PF_Err SmartRender(
 
 
 
+                // ── Pass 3.5: rim→glow transition — tight additive fringe (SmartRender) ─
+                if (glowActive && info.glow_intensity > 0.0) {
+                    const double transRawSR = (glowR_dsX + glowR_dsY) * 0.5 * 0.12;
+                    const double transRSR   = transRawSR < 0.5 ? 0.5 : (transRawSR > 2.0 ? 2.0 : transRawSR);
+                    float* transBufSR = new (std::nothrow) float[nPix];
+                    if (transBufSR) {
+                        memcpy(transBufSR, mask, nPix * sizeof(float));
+                        ApplySoftness(transBufSR, scratch, out_w, out_h, transRSR, transRSR);
+
+                        static const double kTransWeight = 0.85;
+                        const double tIntensitySR = info.glow_intensity * info.glow_opacity * kTransWeight;
+
+                        for (A_long y = 0; y < out_h; ++y) {
+                            for (A_long x = 0; x < out_w; ++x) {
+                                PF_Pixel16& dp = dst_base[y * dst_stride + x];
+                                const A_long ix = x + off_x;
+                                const A_long iy = y + off_y;
+                                const A_u_short srcAlpha = (ix >= 0 && ix < in_w && iy >= 0 && iy < in_h)
+                                    ? src_base[iy * src_stride + ix].alpha : 0;
+
+                                const double tv = transBufSR[y * out_w + x] * tIntensitySR;
+                                if (tv <= 0.0) continue;
+
+                                const double t_alpha = tv > 1.0 ? 1.0 : tv;
+                                const A_u_short tAlpha16 = clamp32768((int)(t_alpha * 32768.0));
+                                if (tAlpha16 == 0) continue;
+
+                                if (srcAlpha == 0) {
+                                    dp.red   = clamp32768((int)(glowR_n * 32768.0));
+                                    dp.green = clamp32768((int)(glowG_n * 32768.0));
+                                    dp.blue  = clamp32768((int)(glowB_n * 32768.0));
+                                    dp.alpha = tAlpha16;
+                                } else {
+                                    const double dR = dp.red   / 32768.0;
+                                    const double dG = dp.green / 32768.0;
+                                    const double dB = dp.blue  / 32768.0;
+                                    dp.red   = clamp32768((int)(GlowBlendChannel(dR, glowR_n * tv, GLOW_TYPE_ADD) * 32768.0));
+                                    dp.green = clamp32768((int)(GlowBlendChannel(dG, glowG_n * tv, GLOW_TYPE_ADD) * 32768.0));
+                                    dp.blue  = clamp32768((int)(GlowBlendChannel(dB, glowB_n * tv, GLOW_TYPE_ADD) * 32768.0));
+                                    if (tAlpha16 > dp.alpha) dp.alpha = tAlpha16;
+                                }
+                            }
+                        }
+                        delete[] transBufSR;
+                    }
+                }
+
                 // ── Pass 4: glow (uses un-matted glowMask) ──────────────────────
 
                 if (glowActive) {
@@ -2676,6 +2835,53 @@ static PF_Err SmartRender(
                 }
 
 
+
+                // ── Pass 3.5: rim→glow transition — tight additive fringe (SmartRender 8-bit) ─
+                if (glowActive && info.glow_intensity > 0.0) {
+                    const double transRawSR8 = (glowR_dsX + glowR_dsY) * 0.5 * 0.12;
+                    const double transRSR8   = transRawSR8 < 0.5 ? 0.5 : (transRawSR8 > 2.0 ? 2.0 : transRawSR8);
+                    float* transBufSR8 = new (std::nothrow) float[nPix];
+                    if (transBufSR8) {
+                        memcpy(transBufSR8, mask, nPix * sizeof(float));
+                        ApplySoftness(transBufSR8, scratch, out_w, out_h, transRSR8, transRSR8);
+
+                        static const double kTransWeight = 0.85;
+                        const double tIntensitySR8 = info.glow_intensity * info.glow_opacity * kTransWeight;
+
+                        for (A_long y = 0; y < out_h; ++y) {
+                            for (A_long x = 0; x < out_w; ++x) {
+                                PF_Pixel8& dp = dst_base[y * dst_stride + x];
+                                const A_long ix = x + off_x;
+                                const A_long iy = y + off_y;
+                                const A_u_char srcAlpha8 = (ix >= 0 && ix < in_w && iy >= 0 && iy < in_h)
+                                    ? src_base[iy * src_stride + ix].alpha : 0;
+
+                                const double tv = transBufSR8[y * out_w + x] * tIntensitySR8;
+                                if (tv <= 0.0) continue;
+
+                                const double t_alpha = tv > 1.0 ? 1.0 : tv;
+                                const A_u_char tAlpha8 = clamp255((int)(t_alpha * 255.0));
+                                if (tAlpha8 == 0) continue;
+
+                                if (srcAlpha8 == 0) {
+                                    dp.red   = clamp255((int)(glowR_n * 255.0));
+                                    dp.green = clamp255((int)(glowG_n * 255.0));
+                                    dp.blue  = clamp255((int)(glowB_n * 255.0));
+                                    dp.alpha = tAlpha8;
+                                } else {
+                                    const double dR = dp.red   / 255.0;
+                                    const double dG = dp.green / 255.0;
+                                    const double dB = dp.blue  / 255.0;
+                                    dp.red   = clamp255((int)(GlowBlendChannel(dR, glowR_n * tv, GLOW_TYPE_ADD) * 255.0));
+                                    dp.green = clamp255((int)(GlowBlendChannel(dG, glowG_n * tv, GLOW_TYPE_ADD) * 255.0));
+                                    dp.blue  = clamp255((int)(GlowBlendChannel(dB, glowB_n * tv, GLOW_TYPE_ADD) * 255.0));
+                                    if (tAlpha8 > dp.alpha) dp.alpha = tAlpha8;
+                                }
+                            }
+                        }
+                        delete[] transBufSR8;
+                    }
+                }
 
                 // ── Pass 4: glow (uses un-matted glowMask) ──────────────────────
 
